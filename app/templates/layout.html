@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Chat Secure</title>
+    <link rel=stylesheet type=text/css href="{{ url_for('static', filename='style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    {{ message|safe }}
+    {% block body %}{% endblock %}
+</body>
+</html>

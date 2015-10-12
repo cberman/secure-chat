@@ -1,0 +1,168 @@
+{% extends "layout.html" %}
+{% block head %}
+    <script src="{{ url_for('static', filename='jquery-1.11.1.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='aes.js') }}"></script>
+    <script src="{{ url_for('static', filename='hmac-sha256.js') }}"></script>
+    <script src="{{ url_for('static', filename='BigInt.js') }}"></script>
+    <script src="{{ url_for('static', filename='sjcl.js') }}"></script>
+    <script src="{{ url_for('static', filename='isaac.js') }}"></script>
+    <script>
+        function GetRandomWords (wordCount) {
+            var randomWords;
+
+            // First we're going to try to use a built-in CSPRNG
+            if (window.crypto && window.crypto.getRandomValues) {
+                randomWords = new Int32Array(wordCount);
+                window.crypto.getRandomValues(randomWords);
+            }
+            // Because of course IE calls it msCrypto instead of being standard
+            else if (window.msCrypto && window.msCrypto.getRandomValues) {
+                randomWords = new Int32Array(wordCount);
+                window.msCrypto.getRandomValues(randomWords);
+            }
+            // So, no built-in functionality - bummer. If the user has wiggled the mouse enough,
+            // sjcl might help us out here
+            else if (sjcl.random.isReady()) {
+                randomWords = sjcl.random.randomWords(wordCount);
+            }
+            // Last resort - we'll use isaac.js to get a random number. It's seeded from Math.random(),
+            // so this isn't ideal, but it'll still greatly increase the space of guesses a hacker would
+            // have to make to crack the password.
+            else {
+                randomWords = [];
+                for (var i = 0; i < wordCount; i++) {
+                    randomWords.push(isaac.rand());
+                }
+            }
+
+            return randomWords;
+        };
+        function secureEquals(s1, s2) {
+            var equal = s1.length == s2.length;
+            var length = Math.min(s1.length, s2.length);
+            for(var i = 0; i < length; i++) {
+                if(s1[i] != s2[i]) {
+                    equal = False;
+                }
+            }
+            return equal;
+        }
+        var p = str2bigInt("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +     // 4096-bit MODP Group
+                           "29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
+                           "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245" +
+                           "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED" +
+                           "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D" +
+                           "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F" +
+                           "83655D23DCA3AD961C62F356208552BB9ED529077096966D" +
+                           "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B" +
+                           "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9" +
+                           "DE2BCBF6955817183995497CEA956AE515D2261898FA0510" +
+                           "15728E5A8AAAC42DAD33170D04507A33A85521ABDF1CBA64" +
+                           "ECFB850458DBEF0A8AEA71575D060C7DB3970F85A6E1E4C7" +
+                           "ABF5AE8CDB0933D71E8C94E04A25619DCEE3D2261AD2EE6B" +
+                           "F12FFA06D98A0864D87602733EC86A64521F2B18177B200C" +
+                           "BBE117577A615D6C770988C0BAD946E208E24FA074E5AB31" +
+                           "43DB5BFCE0FD108E4B82D120A92108011A723C12A787E6D7" +
+                           "88719A10BDBA5B2699C327186AF4E23C1A946834B6150BDA" +
+                           "2583E9CA2AD44CE8DBBBC2DB04DE8EF92E8EFC141FBECAA6" +
+                           "287C59474E6BC05D99B2964FA090C3A2233BA186515BE7ED" +
+                           "1F612970CEE2D7AFB81BDD762170481CD0069127D5B05AA9" +
+                           "93B4EA988D8FDDC186FFB7DC90A6C08F4DF435C934063199" +
+                           "FFFFFFFFFFFFFFFF", 16, 80);
+        var g = str2bigInt("2", 16, 80);
+        var x = "";
+        var key = "";
+        var done = false;
+        function dh() {
+            var random = GetRandomWords(16);    // 512-bit exponent
+            var pad = "00000000";
+            for(var i = 0; i < random.length; i++) {
+                var n = random[i].toString(16);
+                x += pad.substring(0, pad.length - n.length) + n;
+            }
+            x = str2bigInt(x, 16, 80);
+            var X = powMod(g, x, p);
+            var $form = $('#send');
+            $('#message').val(bigInt2str(X, 16));
+            $.post($form.attr('action'), $form.serialize(), function(response){ },'json');
+            $form[0].reset();
+        }
+        function receive(message) {
+            var history = $('#history');
+            history.append(message+'\n');
+            history.scrollTop(history[0].scrollHeight - history.height());
+        }
+        $(document).ready(function(){
+            sjcl.random.startCollectors();
+            $('#refer').text('Give '+document.URL+'/join to your friend!');
+            $('#send').submit(function(){
+                if(key) {
+                    receive('you:\t'+$('#message').val());
+                    var ct = CryptoJS.AES.encrypt($('#message').val(), key).toString();
+                    var hmac = CryptoJS.HmacSHA256(ct, key).toString();
+                    $('#message').val(ct + '_' + hmac);
+                    $.post($(this).attr('action'), $(this).serialize(), function(response){ },'json');
+                    this.reset();
+                }
+                return false;
+            });
+            $('#leave').submit(function(){
+                key = '';
+                $.post($(this).attr('action'), $(this).serialize(), function(response){ },'json');
+                receive('Chat Over');
+                $('#submit').attr("disabled", "true");
+                $('#quit').attr("disabled", "true");
+                done = true;
+                return false;
+            });
+            dh();
+            $(function() {
+                function longPoll() {
+                    $.get("/{{ session.identifier }}/poll", function(data) {
+                        if(data) {
+                            if(data == '\x04')
+                                return $('#leave').submit();
+                            if(key) {
+                                data = data.split('_');
+                                var ct = data[0], hmac = data[1];
+                                if(secureEquals(hmac, CryptoJS.HmacSHA256(ct, key).toString())) {
+                                    var hex = CryptoJS.AES.decrypt(ct, key).toString();
+                                    var str = '';
+                                    for (var i = 0; i < hex.length; i += 2)
+                                        str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+                                    receive('them:\t'+str);
+                                } else {
+                                    receive('Invalid message signature received');
+                                }
+                            } else {
+                                var Y = str2bigInt(data, 16, 100);
+                                key = bigInt2str(powMod(Y, x, p), 16);
+                                receive('Encryption Enabled');
+                                $('#submit').removeAttr("disabled");
+                                $('#refer').remove();
+                            }
+                            setTimeout(longPoll, 10);
+                        } else if(!done) {
+                            setTimeout(longPoll, 1000);
+                        }
+                    });
+                }
+                longPoll();
+            });
+        });
+    </script>
+{% endblock %}
+{% block body %}
+    <textarea readonly="readonly" rows = "7" id="history"></textarea>
+    <br>
+    <form action="/{{ session.identifier }}/send" method="post" id="send">
+        <input name="message" type="text" id="message">
+        <input value="Send" type="submit" id="submit" disabled>
+    </form>
+    <form action="/{{ session.identifier }}/leave" method="post" id="leave">
+        <input value="Stop Chatting" type="submit" id="quit">
+    </form>
+    <br>
+    <div id="refer"/>
+    <br>
+{% endblock %}
